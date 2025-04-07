@@ -1,165 +1,148 @@
+import openai  # OpenAI ke models (ChatGPT) ke liye
 import google.generativeai as genai  # Google Gemini API ke liye
-import os
+import os  # Environment variables ke liye
+
+# LangChain ke components
+from langchain.schema import HumanMessage  # LLM messages ke liye
 from langchain_google_genai import ChatGoogleGenerativeAI
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-from reportlab.lib.utils import ImageReader
-from io import BytesIO
-import base64
-import json
-import time
+from langchain.schema import SystemMessage, AIMessage
+# LangGraph ke components
+import langgraph
+from langgraph.graph import Graph  # AI workflows ke liye Graph-based approach
+from reportlab.lib.pagesizes import letter  # PDF generation ke liye
+from reportlab.pdfgen import canvas  # PDF generation ke liye
 
-# FastAPI
-from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel, Field
-import uvicorn
-import nest_asyncio
-from dotenv import load_dotenv
-
-load_dotenv()
-nest_asyncio.apply()
-
-# FastAPI app create karna
-app = FastAPI()
+# Miscellaneous
+import json  # JSON handling ke liye
+import time  # Execution timing ke liye
 
 # Google Gemini API Key Setup
-def get_gemini_model():
-    try:
-        return ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
-            google_api_key=os.getenv("GEMINI_API")
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini model initialization failed: {str(e)}")
 
-# Request model define karna
-class BookRequest(BaseModel):
-    title: str = Field(..., title="Book Title", min_length=1)
-    subtitle: str = Field(..., title="Subtitle", min_length=1)
-    author: str = Field(..., title="Author Name", min_length=1)
-    style: str = Field(..., title="Writing Style", min_length=1)
-    language: str = Field(..., title="Language", min_length=1)
-    length: str = Field(..., title="Target Length", min_length=1)
-    num_chapters: int = Field(..., title="Number of Chapters", gt=0)
-    sub_chapters: int = Field(..., title="Sub-chapters per Chapter", gt=0)
-    goal: str = Field(..., title="Goal of the Book", min_length=1)
-    audience: str = Field(..., title="Target Audience", min_length=1)
-    tone: str = Field(..., title="Tone of the Book", min_length=1)
-    genre: str = Field(..., title="Genre", min_length=1)
+genai.configure(api_key=os.getenv("GEMINI_API"))
 
-# Prompt generate karne ka function
-def format_prompt(request: BookRequest):
+def initialize_gemini_model():
+    """
+    Google Gemini model ko initialize karta hai.
+    """
+    return ChatGoogleGenerativeAI(
+        model="gemini-1.5-flash",
+        google_api_key=os.getenv("GEMINI_API")
+    )
+
+gemini_model = initialize_gemini_model()
+
+def get_model_parameters():
+    """
+    AI model ke parameters define karta hai.
+    """
+    parameters = {
+        "temperature": 0.7,  # Creativity control
+    }
+    return parameters
+
+def format_prompt(title, subtitle, author, style, language, length):
+    """
+    Generates an optimized prompt for AI to write an immersive, realistic autobiography.
+    """
+
     prompt = f"""
-    You are an advanced AI specializing in crafting deeply engaging autobiographies.
-    Your task is to generate a high-quality, immersive autobiography based on the given details.
+    You are an advanced AI specializing in crafting deeply engaging autobiographies. 
+    Your task is to generate a high-quality, immersive, and emotionally resonant autobiography based on the given details.
 
     Book Specifications:
-    - Title: {request.title}
-    - Subtitle: {request.subtitle}
-    - Author: {request.author}
-    - Writing Style: {request.style}
-    - Language: {request.language}
-    - Target Length: {request.length} words
-    - Number of Chapters: {request.num_chapters}
-    - Sub-chapters per Chapter: {request.sub_chapters}
-    - Main Goal: {request.goal}
-    - Target Audience: {request.audience}
-    - Tone: {request.tone}
-    - Genre: {request.genre}
-
-    Step 1: Generate a structured Table of Contents with concise chapter headings.
-    Step 2: Write a complete and immersive autobiography based on the table of contents.
+    - Title: {title}
+    - Subtitle: {subtitle}
+    - Author: {author}
+    - Writing Style: {style} (Engaging, immersive, first-person storytelling)
+    - Language: {language}
+    - Target Length: {length} words (Ensure a detailed, comprehensive narrative)
     
-    First, return only the Table of Contents. After that, generate the book content.
+    Step 1: Book Structure & Table of Contents
+    First, generate a structured Table of Contents with only concise chapter headings.
+    - Each chapter should have only a title, without any extra descriptions.
+    - The structure should cover all key phases of the author's journey.
+
+    Example:
+    
+    Table of Contents:
+    1. Early Days & Childhood
+    2. First Struggles
+    3. Breakthrough Moments
+    4. Reflections & Lessons
+
+    Step 2: Full-Length Immersive Autobiography
+    Based on the structured Table of Contents, write a complete and immersive autobiography:
+    - First-Person Perspective: Narrate as if the author is telling their own story.
+    - Seamless Flow: Ensure the story progresses naturally across different phases.
+    - Expanded Key Moments: Dive deep into emotions, thoughts, and experiences.
+    - Sensory & Emotional Detailing: Describe places, people, and events vividly.
+    - Authenticity: The storytelling should feel like a genuine human-written memoir.
+    - No Artificial Padding: Maintain natural storytelling without unnecessary repetition.
+
+    Output Expectations:
+    - Emotional Depth: Capture the highs and lows in a gripping, cinematic way.
+    - Realistic Feel: Make it feel like an actual autobiography of a real person.
+    - Logical Progression: No abrupt stops, unnatural breaks, or repetitive fillers.
+    - Balanced Length: Organically maintain the word count through rich storytelling.
+
+    First, generate the Table of Contents with concise chapter headings, and then write the complete immersive autobiography based on it.
     """
     return prompt
 
-# AI response handle karne ka function
-def generate_book_content(prompt, gemini_model):
-    try:
-        response = gemini_model.invoke(prompt)
-        if not response or not response.content:
-            raise HTTPException(status_code=500, detail="AI failed to generate book content.")
-        return response.content.strip()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error in generating book: {str(e)}")
+def generate_book_content(title, subtitle, author, style, language, length):
+    """
+    Gemini AI model se book ka content generate karta hai.
+    """
+    prompt = format_prompt(title, subtitle, author, style, language, length)  # Prompt generate karna
 
-# Extract chapter titles from the AI-generated table of contents
-def extract_chapter_titles(book_content):
-    chapters = []
-    lines = book_content.split("\n")
-    for line in lines:
-        if line.strip() and line[0].isdigit():  # Checking numbered chapters
-            chapters.append(line.strip())
-    return chapters
+    response = gemini_model.invoke(prompt)  # AI Model ko call karna
 
-# Generate AI image using Gemini API
-def generate_chapter_image(chapter_title, gemini_model):
-    try:
-        prompt = f"Create a realistic, high-quality illustration for the chapter titled '{chapter_title}'."
-        response = gemini_model.invoke(prompt, response_format="image")
-        
-        if not response or not response.content:
-            raise HTTPException(status_code=500, detail="Failed to generate image.")
+    # Adding author's name in the beginning of the generated content
+    content = f"By {author}\n\n" + response.content  # Add author name at the top of the content
 
-        return response.content  # This should be a base64-encoded image
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating image: {str(e)}")
+    return content  # AI-generated book content return karega
 
-# Save book as PDF with images
-def save_book_as_pdf(book_content, chapter_images):
-    pdf_filename = "generated_book.pdf"
-    c = canvas.Canvas(pdf_filename, pagesize=letter)
+def clean_generated_content(content):
+    """
+    Removes any unwanted symbols or characters like '*' or other special characters.
+    """
+    content = content.replace("*", "").strip()  # Remove '*' and extra whitespace
+    return content
 
-    y_position = 750  # Starting position for text
+def split_content_into_chunks(book_content, chunk_size=2000):
+    """
+    AI-generated book content ko chhoti chunks me todta hai.
+    """
+    # Clean content before splitting
+    book_content = clean_generated_content(book_content)
+    return [book_content[i:i + chunk_size] for i in range(0, len(book_content), chunk_size)]
 
-    for chapter, image_data in zip(book_content, chapter_images):
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(100, y_position, chapter)
-        y_position -= 30
+def save_book_to_file(book_chunks, filename="AI_Generated_Book.txt"):
+    """
+    AI-generated book content ko ek text file me save karta hai.
+    """
+    with open(filename, "w", encoding="utf-8") as file:
+        for chunk in book_chunks:
+            file.write(chunk + "\n\n")  # Har chunk ke baad newline add karenge
+    return f"Book content saved successfully: {filename}"
 
-        # Convert base64 image to BytesIO
-        image_bytes = BytesIO(base64.b64decode(image_data))
-        image = ImageReader(image_bytes)
+def generate_and_save_book(title, subtitle, author, style, language, length):
+    """
+    AI se book generate karta hai aur usko ek file me save karta hai.
+    """
+    book_content = generate_book_content(title, subtitle, author, style, language, length)  # Content generate karo
+    book_chunks = split_content_into_chunks(book_content)  # Content ko chunks me split karo
+    result_message = save_book_to_file(book_chunks)  # File me save karo
+    return result_message
 
-        c.drawImage(image, 100, y_position - 100, width=400, height=300)
-        y_position -= 350
-
-        # Add Chapter Content
-        c.setFont("Helvetica", 12)
-        c.drawString(100, y_position, "Chapter content goes here...")
-        y_position -= 50
-
-        c.showPage()
-
-    c.save()
-    return pdf_filename
-
-# Book generate karne ka API endpoint
-@app.post("/generate_book_with_images")
-async def generate_book_with_images(request: BookRequest, gemini_model=Depends(get_gemini_model)):
-    try:
-        # Generate Prompt & AI Response
-        prompt = format_prompt(request)
-        book_content = generate_book_content(prompt, gemini_model)
-
-        # Extract Chapter Titles
-        chapter_titles = extract_chapter_titles(book_content)
-        
-        # Generate Images for Each Chapter
-        chapter_images = [generate_chapter_image(title, gemini_model) for title in chapter_titles]
-
-        # Save as PDF
-        pdf_file = save_book_as_pdf(chapter_titles, chapter_images)
-
-        return {"status": True, "message": "Book generated successfully with images", "pdf": pdf_file}
-    
-    except HTTPException as http_exc:
-        raise http_exc
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
-
-# FastAPI server run karne ka code
+# Main logic to take inputs from the user
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    title = input("Enter Book Title: ")
+    subtitle = input("Enter Subtitle: ")
+    author = input("Enter Author Name: ")
+    style = input("Enter Writing Style (e.g., Storytelling, Informative): ")
+    language = input("Enter Language: ")
+    length = input("Enter Approximate Length (e.g., 5000 words, 10 pages): ")
+
+    result = generate_and_save_book(title, subtitle, author, style, language, length)  # Generate and save book
+    print(result)
